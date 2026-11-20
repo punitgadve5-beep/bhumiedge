@@ -1,8 +1,10 @@
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import { supabase } from "./lib/supabase";
 import AuthModal from "./components/AuthModal";
+import PropertyTools from "./components/PropertyTools";
+
+const ADMIN_EMAIL = "punitgadve5@gmail.com";
 
 const categories = [
   { icon: "🌾", name: "Agricultural Land" },
@@ -12,6 +14,7 @@ const categories = [
   { icon: "🏪", name: "Shops" },
   { icon: "🏬", name: "Offices" },
   { icon: "🛏️", name: "PG & Hostels" },
+  { icon: "🌴", name: "Farmhouses" },
 ];
 
 const categoryImages = {
@@ -22,6 +25,7 @@ const categoryImages = {
   Shops: "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1000&q=85",
   Offices: "https://images.unsplash.com/photo-1497366754035-f200968a6e72?auto=format&fit=crop&w=1000&q=85",
   "PG & Hostels": "https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?auto=format&fit=crop&w=1000&q=85",
+  Farmhouses: "https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=1000&q=85",
 };
 
 const initialProperties = [
@@ -35,9 +39,11 @@ const initialProperties = [
     type: "Plots",
     image: categoryImages.Plots,
     isSampleImage: true,
+    isFeatured: false,
+    isVerified: true,
     description: "Beautiful residential plot in a developing area.",
     details: "1500 Sq.ft | East Facing",
-    sellerName: "",
+    sellerName: "BhumiEdge Desk",
     sellerPhone: "",
   },
   {
@@ -50,9 +56,11 @@ const initialProperties = [
     type: "Houses",
     image: categoryImages.Houses,
     isSampleImage: true,
+    isFeatured: false,
+    isVerified: false,
     description: "Modern family house with spacious rooms.",
     details: "3 Bedrooms | 2 Bathrooms",
-    sellerName: "",
+    sellerName: "BhumiEdge Desk",
     sellerPhone: "",
   },
   {
@@ -65,9 +73,11 @@ const initialProperties = [
     type: "Agricultural Land",
     image: categoryImages["Agricultural Land"],
     isSampleImage: true,
+    isFeatured: false,
+    isVerified: true,
     description: "Agricultural land suitable for farming.",
     details: "3 Acres | Black Soil",
-    sellerName: "",
+    sellerName: "BhumiEdge Desk",
     sellerPhone: "",
   },
   {
@@ -80,9 +90,11 @@ const initialProperties = [
     type: "Flats",
     image: categoryImages.Flats,
     isSampleImage: true,
+    isFeatured: false,
+    isVerified: false,
     description: "Furnished flat available for rent.",
     details: "2 Bedrooms | Furnished",
-    sellerName: "",
+    sellerName: "BhumiEdge Desk",
     sellerPhone: "",
   },
 ];
@@ -100,42 +112,114 @@ const emptyPostForm = {
   sellerPhone: "",
 };
 
-const formatPrice = (value) =>
-  Number(value).toLocaleString("en-IN");
+const emptyLeadForm = {
+  buyerName: "",
+  buyerPhone: "",
+  buyerNote: "",
+};
+
+const formatPrice = (value) => Number(value).toLocaleString("en-IN");
+
+const mapDbProperty = (item) => ({
+  id: item.id,
+  ownerId: item.owner_id,
+  title: item.title,
+  location:
+    item.address?.trim() ||
+    [item.city, item.state].filter(Boolean).join(", ") ||
+    "Location not provided",
+  price:
+    item.price == null
+      ? "Price on request"
+      : `₹${formatPrice(item.price)}${
+          item.transaction_type === "Rent" ? "/month" : ""
+        }`,
+  priceValue: Number(item.price || 0),
+  transactionType: item.transaction_type || "Buy",
+  type: item.category,
+  image:
+    item.image_url || categoryImages[item.category] || categoryImages.Plots,
+  isSampleImage: !item.image_url,
+  isFeatured: Boolean(item.is_featured),
+  isVerified: Boolean(item.is_verified),
+  description: item.description || "",
+  details: item.area ? `${item.area} ${item.area_unit || "sqft"}` : "",
+  sellerName: item.seller_name || "",
+  sellerPhone: item.seller_phone || "",
+  status: item.status || "pending",
+  isFromDatabase: true,
+});
 
 export default function App() {
   const [properties, setProperties] = useState(initialProperties);
+  const [myProperties, setMyProperties] = useState([]);
+  const [adminAllProperties, setAdminAllProperties] = useState([]);
+  const [adminLeads, setAdminLeads] = useState([]);
+  const [adminTab, setAdminTab] = useState("properties");
   const [user, setUser] = useState(null);
 
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [transactionType, setTransactionType] = useState("All");
+  const [sortBy, setSortBy] = useState("newest");
   const [minBudget, setMinBudget] = useState("");
   const [maxBudget, setMaxBudget] = useState("");
 
+  const [savedIds, setSavedIds] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("bhumiedge_saved") || "[]");
+    } catch {
+      return [];
+    }
+  });
+  const [showSavedOnly, setShowSavedOnly] = useState(false);
+
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isPostOpen, setIsPostOpen] = useState(false);
+  const [isMyPropsOpen, setIsMyPropsOpen] = useState(false);
+  const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [selectedProperty, setSelectedProperty] = useState(null);
+
+  // Buyer enquiry modal state
+  const [isEnquiryOpen, setIsEnquiryOpen] = useState(false);
+  const [enquiryProperty, setEnquiryProperty] = useState(null);
+  const [leadForm, setLeadForm] = useState(emptyLeadForm);
+  const [isSendingLead, setIsSendingLead] = useState(false);
 
   const [postForm, setPostForm] = useState(emptyPostForm);
   const [imageError, setImageError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
   const fileInputRef = useRef(null);
+  const isAdmin = user?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
-  // Check login session and listen for login/logout changes
+  const pendingPropCount = useMemo(
+    () => adminAllProperties.filter((p) => p.status === "pending").length,
+    [adminAllProperties]
+  );
+
+  const pendingLeadCount = useMemo(
+    () => adminLeads.filter((l) => l.status === "pending").length,
+    [adminLeads]
+  );
+
+  const toggleSaveProperty = (id) => {
+    setSavedIds((prev) => {
+      const updated = prev.includes(id)
+        ? prev.filter((item) => item !== id)
+        : [...prev, id];
+      localStorage.setItem("bhumiedge_saved", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   useEffect(() => {
     let isMounted = true;
 
     const loadUser = async () => {
       const { data, error } = await supabase.auth.getSession();
-
-      if (error) {
-        console.error("Session check failed:", error.message);
-        return;
-      }
-
-      if (isMounted) {
+      if (!error && isMounted) {
         setUser(data.session?.user ?? null);
       }
     };
@@ -156,78 +240,90 @@ export default function App() {
     };
   }, []);
 
-  // Load published properties from Supabase
+  const loadPublishedProperties = async () => {
+    const { data, error } = await supabase
+      .from("properties")
+      .select("*")
+      .eq("status", "published")
+      .order("is_featured", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Properties load failed:", error.message);
+      return;
+    }
+
+    const databaseProperties = (data || []).map(mapDbProperty);
+
+    setProperties((current) => [
+      ...databaseProperties,
+      ...current.filter((property) => !property.isFromDatabase),
+    ]);
+  };
+
+  const loadMyProperties = async (currentUser) => {
+    if (!currentUser) {
+      setMyProperties([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("properties")
+      .select("*")
+      .eq("owner_id", currentUser.id)
+      .order("created_at", { ascending: false });
+
+    if (!error) {
+      setMyProperties((data || []).map(mapDbProperty));
+    }
+  };
+
+  const loadAdminProperties = async (currentUser) => {
+    if (currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      setAdminAllProperties([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("properties")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!error) {
+      setAdminAllProperties((data || []).map(mapDbProperty));
+    }
+  };
+
+  const loadAdminLeads = async (currentUser) => {
+    if (currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase()) {
+      setAdminLeads([]);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("lead_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+
+    if (!error) {
+      setAdminLeads(data || []);
+    }
+  };
+
   useEffect(() => {
-    let isMounted = true;
-
-    const loadPublishedProperties = async () => {
-      const { data, error } = await supabase
-        .from("properties")
-        .select(
-          "id, title, category, description, price, city, state, address, area, area_unit, transaction_type, seller_name, seller_phone, image_url"
-        )
-        .eq("status", "published")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.error("Properties load failed:", error.message);
-        return;
-      }
-
-      const databaseProperties = (data || []).map((item) => ({
-        id: item.id,
-        title: item.title,
-        location:
-          item.address?.trim() ||
-          [item.city, item.state].filter(Boolean).join(", ") ||
-          "Location not provided",
-        price:
-          item.price == null
-            ? "Price on request"
-            : `₹${formatPrice(item.price)}${
-                item.transaction_type === "Rent" ? "/month" : ""
-              }`,
-        priceValue: Number(item.price || 0),
-        transactionType: item.transaction_type || "Buy",
-        type: item.category,
-        image:
-          item.image_url ||
-          categoryImages[item.category] ||
-          categoryImages.Plots,
-        isSampleImage: !item.image_url,
-        description: item.description || "",
-        details: item.area
-          ? `${item.area} ${item.area_unit || "sqft"}`
-          : "",
-        sellerName: item.seller_name || "",
-        sellerPhone: item.seller_phone || "",
-        isFromDatabase: true,
-      }));
-
-      if (isMounted) {
-        setProperties((current) => [
-          ...current.filter((property) => !property.isFromDatabase),
-          ...databaseProperties,
-        ]);
-
-        console.log(
-          "Published properties loaded:",
-          databaseProperties.length
-        );
-      }
-    };
-
     loadPublishedProperties();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
+
+  useEffect(() => {
+    loadMyProperties(user);
+    loadAdminProperties(user);
+    loadAdminLeads(user);
+  }, [user]);
 
   const filteredProperties = useMemo(() => {
     const search = searchText.trim().toLowerCase();
 
-    return properties.filter((p) => {
+    const filtered = properties.filter((p) => {
       const searchable = [
         p.title,
         p.location,
@@ -239,17 +335,24 @@ export default function App() {
         .toLowerCase();
 
       return (
+        (!showSavedOnly || savedIds.includes(p.id)) &&
         searchable.includes(search) &&
-        (selectedCategory === "All" ||
-          p.type === selectedCategory) &&
-        (transactionType === "All" ||
-          p.transactionType === transactionType) &&
-        (minBudget === "" ||
-          p.priceValue >= Number(minBudget)) &&
-        (maxBudget === "" ||
-          p.priceValue <= Number(maxBudget))
+        (selectedCategory === "All" || p.type === selectedCategory) &&
+        (transactionType === "All" || p.transactionType === transactionType) &&
+        (minBudget === "" || p.priceValue >= Number(minBudget)) &&
+        (maxBudget === "" || p.priceValue <= Number(maxBudget))
       );
     });
+
+    if (sortBy === "price-low") {
+      return [...filtered].sort((a, b) => a.priceValue - b.priceValue);
+    }
+    if (sortBy === "price-high") {
+      return [...filtered].sort((a, b) => b.priceValue - a.priceValue);
+    }
+    return [...filtered].sort(
+      (a, b) => Number(Boolean(b.isFeatured)) - Number(Boolean(a.isFeatured))
+    );
   }, [
     properties,
     searchText,
@@ -257,21 +360,23 @@ export default function App() {
     transactionType,
     minBudget,
     maxBudget,
+    sortBy,
+    showSavedOnly,
+    savedIds,
   ]);
 
   const resetFilters = () => {
     setSearchText("");
     setSelectedCategory("All");
     setTransactionType("All");
+    setSortBy("newest");
     setMinBudget("");
     setMaxBudget("");
+    setShowSavedOnly(false);
   };
 
   const updatePostForm = (field, value) => {
-    setPostForm((old) => ({
-      ...old,
-      [field]: value,
-    }));
+    setPostForm((old) => ({ ...old, [field]: value }));
   };
 
   const closePostModal = () => {
@@ -287,7 +392,6 @@ export default function App() {
 
   const handleImageUpload = (event) => {
     const file = event.target.files?.[0];
-
     if (!file) return;
 
     if (!file.type.startsWith("image/")) {
@@ -303,29 +407,23 @@ export default function App() {
     }
 
     const reader = new FileReader();
-
     reader.onload = () => {
       updatePostForm("image", String(reader.result));
       setImageError("");
     };
-
     reader.onerror = () => {
       setImageError("Could not read this image. Please try another file.");
     };
-
     reader.readAsDataURL(file);
   };
 
-  // Upload photo to Supabase Storage
   const uploadPropertyImage = async (currentUser) => {
     if (!postForm.image) return null;
 
     const response = await fetch(postForm.image);
     const imageBlob = await response.blob();
-
     const extension =
       imageBlob.type.split("/")[1]?.replace("jpeg", "jpg") || "jpg";
-
     const filePath = `${currentUser.id}/${crypto.randomUUID()}.${extension}`;
 
     const { error: uploadError } = await supabase.storage
@@ -336,9 +434,7 @@ export default function App() {
       });
 
     if (uploadError) {
-      throw new Error(
-        `Photo upload failed: ${uploadError.message}`
-      );
+      throw new Error(`Photo upload failed: ${uploadError.message}`);
     }
 
     const { data } = supabase.storage
@@ -348,7 +444,6 @@ export default function App() {
     return data.publicUrl;
   };
 
-  // Save property in Supabase
   const handlePostProperty = async (event) => {
     event.preventDefault();
 
@@ -359,10 +454,7 @@ export default function App() {
       return;
     }
 
-    const numericPrice = Number(
-      String(postForm.price).replace(/[₹,\s]/g, "")
-    );
-
+    const numericPrice = Number(String(postForm.price).replace(/[₹,\s]/g, ""));
     const phone = postForm.sellerPhone.replace(/\D/g, "");
 
     if (
@@ -388,7 +480,6 @@ export default function App() {
 
     try {
       const imageUrl = await uploadPropertyImage(user);
-
       const locationParts = postForm.location
         .split(",")
         .map((part) => part.trim())
@@ -400,38 +491,42 @@ export default function App() {
           ? locationParts[locationParts.length - 1]
           : null;
 
-      const { error } = await supabase
-        .from("properties")
-        .insert({
-          owner_id: user.id,
-          title: postForm.title.trim(),
-          category: postForm.type,
-          description: postForm.description.trim(),
-          price: numericPrice,
-          city,
-          state,
-          address: postForm.location.trim(),
-          transaction_type: postForm.transactionType,
-          seller_name: postForm.sellerName.trim(),
-          seller_phone: phone,
-          image_url: imageUrl,
-          status: "pending",
-        });
+      const fullDescription = [
+        postForm.description.trim(),
+        postForm.details.trim()
+          ? `Additional Details: ${postForm.details.trim()}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
 
-      if (error) {
-        throw error;
-      }
+      const { error } = await supabase.from("properties").insert({
+        owner_id: user.id,
+        title: postForm.title.trim(),
+        category: postForm.type,
+        description: fullDescription,
+        price: numericPrice,
+        city,
+        state,
+        address: postForm.location.trim(),
+        transaction_type: postForm.transactionType,
+        seller_name: postForm.sellerName.trim(),
+        seller_phone: phone,
+        image_url: imageUrl,
+        status: "pending",
+      });
+
+      if (error) throw error;
 
       setPostForm(emptyPostForm);
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-
+      if (fileInputRef.current) fileInputRef.current.value = "";
       closePostModal();
 
+      await loadMyProperties(user);
+      if (isAdmin) await loadAdminProperties(user);
+
       alert(
-        "Property submitted successfully! It will appear publicly after approval."
+        "Property submitted for free! Check 'My Properties' to track approval status."
       );
     } catch (error) {
       console.error("Property submission failed:", error);
@@ -441,67 +536,202 @@ export default function App() {
     }
   };
 
+  // Buyer submits contact request -> goes to Admin queue first
+  const handleSendLeadRequest = async (event) => {
+    event.preventDefault();
+    if (!enquiryProperty) return;
+
+    const cleanPhone = leadForm.buyerPhone.replace(/\D/g, "");
+    if (!leadForm.buyerName.trim()) {
+      alert("Please enter your name.");
+      return;
+    }
+    if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
+      alert("Please enter a valid 10-digit mobile number.");
+      return;
+    }
+
+    setIsSendingLead(true);
+    try {
+      const { error } = await supabase.from("lead_requests").insert({
+        property_id: String(enquiryProperty.id),
+        property_title: enquiryProperty.title,
+        seller_name: enquiryProperty.sellerName || "",
+        seller_phone: enquiryProperty.sellerPhone || "",
+        buyer_user_id: user?.id || null,
+        buyer_name: leadForm.buyerName.trim(),
+        buyer_phone: cleanPhone,
+        buyer_note: leadForm.buyerNote.trim() || null,
+        status: "pending",
+      });
+
+      if (error) throw error;
+
+      setLeadForm(emptyLeadForm);
+      setIsEnquiryOpen(false);
+      setEnquiryProperty(null);
+      if (isAdmin) await loadAdminLeads(user);
+
+      alert(
+        "Request sent to BhumiEdge desk! Our team will review and connect you with the owner."
+      );
+    } catch (error) {
+      alert(error.message || "Could not send request. Please try again.");
+    } finally {
+      setIsSendingLead(false);
+    }
+  };
+
+  const handleAdminUpdate = async (propertyId, updates, successMsg) => {
+    setActionLoadingId(propertyId);
+    try {
+      const { error } = await supabase
+        .from("properties")
+        .update(updates)
+        .eq("id", propertyId);
+
+      if (error) throw error;
+
+      await Promise.all([
+        loadPublishedProperties(),
+        loadAdminProperties(user),
+        loadMyProperties(user),
+      ]);
+      if (successMsg) alert(successMsg);
+    } catch (error) {
+      alert(error.message || "Update failed. Check Supabase RLS policies.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleLeadStatusChange = async (leadId, newStatus) => {
+    setActionLoadingId(leadId);
+    try {
+      const { error } = await supabase
+        .from("lead_requests")
+        .update({ status: newStatus })
+        .eq("id", leadId);
+
+      if (error) throw error;
+      await loadAdminLeads(user);
+    } catch (error) {
+      alert(error.message || "Could not update lead status.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
+  const handleDeleteProperty = async (propertyId) => {
+    if (!window.confirm("Are you sure you want to delete this property?")) {
+      return;
+    }
+
+    setActionLoadingId(propertyId);
+    try {
+      const { error } = await supabase
+        .from("properties")
+        .delete()
+        .eq("id", propertyId);
+
+      if (error) throw error;
+
+      await Promise.all([
+        loadPublishedProperties(),
+        loadAdminProperties(user),
+        loadMyProperties(user),
+      ]);
+      alert("Property deleted.");
+    } catch (error) {
+      alert(error.message || "Delete failed. Check Supabase RLS policies.");
+    } finally {
+      setActionLoadingId(null);
+    }
+  };
+
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
-
     if (error) {
       alert(error.message);
       return;
     }
-
     setUser(null);
+    setMyProperties([]);
+    setAdminAllProperties([]);
+    setAdminLeads([]);
     alert("You have been logged out.");
-  };
-
-  const handleContactSeller = (property) => {
-    const phone = (property.sellerPhone || "").replace(/\D/g, "");
-
-    if (!/^[6-9]\d{9}$/.test(phone)) {
-      alert(
-        "Seller contact number is not available for this sample listing."
-      );
-      return;
-    }
-
-    const message = encodeURIComponent(
-      `Hello ${property.sellerName}, I am interested in your property: ${property.title}, located at ${property.location}. Please share more details.`
-    );
-
-    window.open(
-      `https://wa.me/91${phone}?text=${message}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
   };
 
   const handleImageError = (event, type) => {
     const fallback = categoryImages[type] || categoryImages.Plots;
-
     if (event.currentTarget.src !== fallback) {
       event.currentTarget.src = fallback;
     }
   };
 
+  const totalAdminBadges = pendingPropCount + pendingLeadCount;
+
   return (
     <>
       <header className="navbar">
         <a className="logo" href="#home">
-          <span>🌍</span> Bhoomi <b>Setu</b>
+          <span>🌍</span> Bhumi<b>Edge</b>
         </a>
 
         <nav className="nav-links" aria-label="Main navigation">
           <a href="#home">Home</a>
           <a href="#categories">Categories</a>
           <a href="#properties">Properties</a>
+          <a href="#tools">Calculators</a>
           <a href="#about">About</a>
         </nav>
 
         <div className="nav-actions">
+          <button
+            className="login-btn"
+            style={
+              showSavedOnly
+                ? {
+                    background: "#fee2e2",
+                    borderColor: "#ef4444",
+                    color: "#b91c1c",
+                  }
+                : undefined
+            }
+            onClick={() => {
+              setShowSavedOnly((prev) => !prev);
+              scrollToProperties();
+            }}
+          >
+            ❤️ Saved ({savedIds.length})
+          </button>
+
           {user ? (
             <>
-              <span className="user-email">
-                {user.email}
-              </span>
+              <button
+                className="login-btn"
+                onClick={() => {
+                  loadMyProperties(user);
+                  setIsMyPropsOpen(true);
+                }}
+              >
+                My Properties ({myProperties.length})
+              </button>
+
+              {isAdmin && (
+                <button
+                  className="login-btn"
+                  style={{ borderColor: "#d97706", color: "#b45309" }}
+                  onClick={() => {
+                    loadAdminProperties(user);
+                    loadAdminLeads(user);
+                    setIsAdminOpen(true);
+                  }}
+                >
+                  Admin ({totalAdminBadges})
+                </button>
+              )}
+
               <button className="login-btn" onClick={handleLogout}>
                 Logout
               </button>
@@ -522,7 +752,6 @@ export default function App() {
                 setIsLoginOpen(true);
                 return;
               }
-
               setIsPostOpen(true);
             }}
           >
@@ -535,18 +764,18 @@ export default function App() {
         <section className="hero" id="home">
           <div className="hero-content">
             <span className="hero-tagline">
-              YOUR TRUSTED BRIDGE TO PROPERTY
+              PAN-INDIA PROPERTY NETWORK
             </span>
 
             <h1>
               Find Your Perfect
               <br />
-              <span>Property With Bhoomi Setu</span>
+              <span>Property With BhumiEdge</span>
             </h1>
 
             <p>
               Agricultural Land, Plots, Houses, Flats and Commercial
-              Properties — all in one place.
+              Properties across India — list and explore free.
             </p>
 
             <form
@@ -566,8 +795,8 @@ export default function App() {
             </form>
 
             <div className="hero-highlights">
-              <span>✓ Explore multiple property types</span>
-              <span>✓ Connect with property owners</span>
+              <span>✓ Free property listing &amp; search</span>
+              <span>✓ Assisted owner connect across India</span>
             </div>
           </div>
         </section>
@@ -603,7 +832,9 @@ export default function App() {
         <section className="properties-section" id="properties">
           <div className="section-heading">
             <span>PROPERTY LISTINGS</span>
-            <h2>Explore Properties</h2>
+            <h2>
+              {showSavedOnly ? "Your Saved Properties" : "Explore Properties"}
+            </h2>
             <p>Find your dream property with smart filters.</p>
           </div>
 
@@ -647,8 +878,18 @@ export default function App() {
               onChange={(e) => setMaxBudget(e.target.value)}
             />
 
+            <select
+              aria-label="Sort properties"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="newest">Sort: Featured &amp; Newest</option>
+              <option value="price-low">Price: Low to High</option>
+              <option value="price-high">Price: High to Low</option>
+            </select>
+
             <button className="reset-filter-btn" onClick={resetFilters}>
-              Reset Filters
+              Reset
             </button>
           </div>
 
@@ -658,9 +899,14 @@ export default function App() {
               {filteredProperties.length === 1 ? "property" : "properties"}
             </p>
 
-            {selectedCategory !== "All" && (
-              <button onClick={() => setSelectedCategory("All")}>
-                Clear category
+            {(selectedCategory !== "All" || showSavedOnly) && (
+              <button
+                onClick={() => {
+                  setSelectedCategory("All");
+                  setShowSavedOnly(false);
+                }}
+              >
+                Show all properties
               </button>
             )}
           </div>
@@ -668,7 +914,18 @@ export default function App() {
           <div className="properties-grid">
             {filteredProperties.length ? (
               filteredProperties.map((p) => (
-                <article className="property-card" key={p.id}>
+                <article
+                  className="property-card"
+                  key={p.id}
+                  style={
+                    p.isFeatured
+                      ? {
+                          border: "2px solid #f59e0b",
+                          boxShadow: "0 10px 25px rgba(245, 158, 11, 0.14)",
+                        }
+                      : undefined
+                  }
+                >
                   <div className="property-image">
                     <img
                       src={p.image || categoryImages[p.type]}
@@ -683,6 +940,49 @@ export default function App() {
                       {p.transactionType === "Buy" ? "For Sale" : "For Rent"}
                     </span>
 
+                    {p.isFeatured && (
+                      <span
+                        style={{
+                          position: "absolute",
+                          top: "44px",
+                          left: "12px",
+                          background: "#f59e0b",
+                          color: "#111827",
+                          fontSize: "0.72rem",
+                          fontWeight: 800,
+                          padding: "3px 9px",
+                          borderRadius: "6px",
+                        }}
+                      >
+                        ⭐ Featured
+                      </span>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => toggleSaveProperty(p.id)}
+                      title={
+                        savedIds.includes(p.id)
+                          ? "Remove from Saved"
+                          : "Save Property"
+                      }
+                      style={{
+                        position: "absolute",
+                        top: "12px",
+                        right: "12px",
+                        background: "#ffffff",
+                        border: "none",
+                        borderRadius: "50%",
+                        width: "36px",
+                        height: "36px",
+                        cursor: "pointer",
+                        fontSize: "1.1rem",
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+                      }}
+                    >
+                      {savedIds.includes(p.id) ? "❤️" : "🤍"}
+                    </button>
+
                     {p.isSampleImage && (
                       <span className="sample-image-label">
                         Representative image
@@ -691,11 +991,36 @@ export default function App() {
                   </div>
 
                   <div className="property-content">
-                    <p className="property-category">{p.type}</p>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "0.5rem",
+                      }}
+                    >
+                      <p className="property-category" style={{ margin: 0 }}>
+                        {p.type}
+                      </p>
+
+                      {p.isVerified && (
+                        <span
+                          style={{
+                            fontSize: "0.72rem",
+                            fontWeight: 700,
+                            background: "#dcfce7",
+                            color: "#15803d",
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                          }}
+                        >
+                          ✓ Verified
+                        </span>
+                      )}
+                    </div>
+
                     <h3>{p.title}</h3>
-                    <p className="property-location">
-                      📍 {p.location}
-                    </p>
+                    <p className="property-location">📍 {p.location}</p>
 
                     <div className="property-card-bottom">
                       <h2 className="property-price">{p.price}</h2>
@@ -719,13 +1044,16 @@ export default function App() {
           </div>
         </section>
 
+        <PropertyTools />
+
         <section className="student-section">
           <div className="student-content">
             <div>
               <span>STUDENT LIVING</span>
               <h2>Find Your PG & Hostel</h2>
               <p>
-                Students ke liye affordable PG aur hostel options ek hi jagah.
+                Affordable and verified PG and hostel options for students in
+                one place.
               </p>
               <button
                 onClick={() => {
@@ -744,11 +1072,11 @@ export default function App() {
 
         <section className="about-section" id="about">
           <div className="section-heading">
-            <span>ABOUT BHOOMI SETU</span>
+            <span>ABOUT BHUMIEDGE</span>
             <h2>Your Trusted Bridge to Property</h2>
             <p>
-              Bhoomi Setu aims to connect buyers, sellers, tenants and
-              property owners through one easy-to-use platform.
+              BhumiEdge aims to connect buyers, sellers, tenants and property
+              owners across India through one easy-to-use platform.
             </p>
           </div>
 
@@ -763,7 +1091,7 @@ export default function App() {
             </div>
             <div>
               <b>03</b>
-              <span>Connect with sellers</span>
+              <span>Connect with owners via BhumiEdge</span>
             </div>
           </div>
         </section>
@@ -771,12 +1099,13 @@ export default function App() {
 
       <footer className="footer">
         <a className="logo" href="#home">
-          🌍 Bhoomi <b>Setu</b>
+          🌍 Bhumi<b>Edge</b>
         </a>
         <p>Your Trusted Bridge to Property</p>
-        <small>© 2026 Bhoomi Setu. All rights reserved.</small>
+        <small>© 2026 BhumiEdge. All rights reserved.</small>
       </footer>
 
+      {/* Login Modal */}
       {isLoginOpen && (
         <AuthModal
           onClose={() => setIsLoginOpen(false)}
@@ -787,6 +1116,7 @@ export default function App() {
         />
       )}
 
+      {/* Post Property Modal */}
       {isPostOpen && (
         <div className="modal-overlay" onMouseDown={closePostModal}>
           <section
@@ -806,7 +1136,7 @@ export default function App() {
 
             <h2 id="post-title">Post Your Property</h2>
             <p className="modal-intro">
-              Share accurate property and seller details.
+              List your property on BhumiEdge across India.
             </p>
 
             <form onSubmit={handlePostProperty}>
@@ -828,9 +1158,7 @@ export default function App() {
                   <label>Property Category *</label>
                   <select
                     value={postForm.type}
-                    onChange={(e) =>
-                      updatePostForm("type", e.target.value)
-                    }
+                    onChange={(e) => updatePostForm("type", e.target.value)}
                   >
                     {categories.map((cat) => (
                       <option key={cat.name} value={cat.name}>
@@ -844,9 +1172,7 @@ export default function App() {
                   <label>Property Title *</label>
                   <input
                     value={postForm.title}
-                    onChange={(e) =>
-                      updatePostForm("title", e.target.value)
-                    }
+                    onChange={(e) => updatePostForm("title", e.target.value)}
                     placeholder="Example: 2 BHK House"
                     required
                   />
@@ -874,28 +1200,26 @@ export default function App() {
                     type="number"
                     min="1"
                     value={postForm.price}
-                    onChange={(e) =>
-                      updatePostForm("price", e.target.value)
-                    }
+                    onChange={(e) => updatePostForm("price", e.target.value)}
                     placeholder="Enter amount in rupees"
                     required
                   />
                 </div>
 
                 <div className="form-field">
-                  <label>Seller Name *</label>
+                  <label>Owner / Seller Name *</label>
                   <input
                     value={postForm.sellerName}
                     onChange={(e) =>
                       updatePostForm("sellerName", e.target.value)
                     }
-                    placeholder="Seller name"
+                    placeholder="Owner name"
                     required
                   />
                 </div>
 
                 <div className="form-field">
-                  <label>Seller Mobile Number *</label>
+                  <label>Owner Mobile Number *</label>
                   <input
                     type="tel"
                     inputMode="numeric"
@@ -920,14 +1244,11 @@ export default function App() {
                     accept="image/*"
                     onChange={handleImageUpload}
                   />
-
                   <small>
                     Upload a real photo of the property. Maximum size: 5 MB.
                   </small>
 
-                  {imageError && (
-                    <p className="form-error">{imageError}</p>
-                  )}
+                  {imageError && <p className="form-error">{imageError}</p>}
 
                   {postForm.image && (
                     <div className="image-preview">
@@ -945,11 +1266,6 @@ export default function App() {
                       </button>
                     </div>
                   )}
-
-                  <small>
-                    If no photo is uploaded, a representative category image
-                    will be shown.
-                  </small>
                 </div>
 
                 <div className="form-field full-width">
@@ -967,11 +1283,9 @@ export default function App() {
                 <div className="form-field full-width">
                   <label>Additional Details</label>
                   <textarea
-                    rows="3"
+                    rows="2"
                     value={postForm.details}
-                    onChange={(e) =>
-                      updatePostForm("details", e.target.value)
-                    }
+                    onChange={(e) => updatePostForm("details", e.target.value)}
                     placeholder="Area, bedrooms, road width, soil type, facing etc."
                   />
                 </div>
@@ -989,6 +1303,534 @@ export default function App() {
         </div>
       )}
 
+      {/* Buyer Contact Request Modal */}
+      {isEnquiryOpen && enquiryProperty && (
+        <div
+          className="modal-overlay"
+          onMouseDown={() => setIsEnquiryOpen(false)}
+        >
+          <section
+            className="modal post-property-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="modal-close"
+              onClick={() => setIsEnquiryOpen(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+
+            <h2>Request Owner Connection</h2>
+            <p className="modal-intro">
+              Property: <b>{enquiryProperty.title}</b> • Owner:{" "}
+              <b>{enquiryProperty.sellerName || "Property Owner"}</b>. Your
+              details go to BhumiEdge first so we can verify and connect you.
+            </p>
+
+            <form onSubmit={handleSendLeadRequest}>
+              <div className="form-grid">
+                <div className="form-field full-width">
+                  <label>Your Name *</label>
+                  <input
+                    value={leadForm.buyerName}
+                    onChange={(e) =>
+                      setLeadForm((old) => ({
+                        ...old,
+                        buyerName: e.target.value,
+                      }))
+                    }
+                    placeholder="Enter your full name"
+                    required
+                  />
+                </div>
+
+                <div className="form-field full-width">
+                  <label>Your Mobile Number *</label>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    maxLength="10"
+                    value={leadForm.buyerPhone}
+                    onChange={(e) =>
+                      setLeadForm((old) => ({
+                        ...old,
+                        buyerPhone: e.target.value
+                          .replace(/\D/g, "")
+                          .slice(0, 10),
+                      }))
+                    }
+                    placeholder="10-digit mobile number"
+                    required
+                  />
+                </div>
+
+                <div className="form-field full-width">
+                  <label>Requirement / Note (Optional)</label>
+                  <textarea
+                    rows="3"
+                    value={leadForm.buyerNote}
+                    onChange={(e) =>
+                      setLeadForm((old) => ({
+                        ...old,
+                        buyerNote: e.target.value,
+                      }))
+                    }
+                    placeholder="Budget, visit timing, or any question..."
+                  />
+                </div>
+              </div>
+
+              <button
+                className="modal-submit-btn"
+                type="submit"
+                disabled={isSendingLead}
+              >
+                {isSendingLead ? "Sending Request..." : "Send Contact Request"}
+              </button>
+            </form>
+          </section>
+        </div>
+      )}
+
+      {/* My Properties Modal */}
+      {isMyPropsOpen && (
+        <div
+          className="modal-overlay"
+          onMouseDown={() => setIsMyPropsOpen(false)}
+        >
+          <section
+            className="modal post-property-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="modal-close"
+              onClick={() => setIsMyPropsOpen(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+
+            <h2>My Listed Properties</h2>
+            <p className="modal-intro">
+              Logged in as <b>{user?.email}</b>
+            </p>
+
+            {myProperties.length === 0 ? (
+              <p style={{ padding: "1rem 0", color: "#555" }}>
+                You haven&apos;t posted any properties yet. Click &quot;+ Post
+                Property&quot; to list your first property!
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: "1rem", marginTop: "1rem" }}>
+                {myProperties.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "10px",
+                      padding: "1rem",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "1rem",
+                    }}
+                  >
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          gap: "6px",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontSize: "0.75rem",
+                            fontWeight: 700,
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                            background:
+                              item.status === "published"
+                                ? "#dcfce7"
+                                : "#fef3c7",
+                            color:
+                              item.status === "published"
+                                ? "#166534"
+                                : "#92400e",
+                          }}
+                        >
+                          {item.status === "published"
+                            ? "✓ Published"
+                            : "⏳ Pending Approval"}
+                        </span>
+                      </div>
+                      <h4 style={{ margin: "6px 0 2px" }}>{item.title}</h4>
+                      <small style={{ color: "#6b7280" }}>
+                        {item.location} • {item.price}
+                      </small>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={actionLoadingId === item.id}
+                      onClick={() => handleDeleteProperty(item.id)}
+                      style={{
+                        background: "#fee2e2",
+                        color: "#b91c1c",
+                        border: "none",
+                        padding: "0.45rem 0.85rem",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* Admin Control Panel Modal */}
+      {isAdminOpen && isAdmin && (
+        <div
+          className="modal-overlay"
+          onMouseDown={() => setIsAdminOpen(false)}
+        >
+          <section
+            className="modal post-property-modal"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              className="modal-close"
+              onClick={() => setIsAdminOpen(false)}
+              aria-label="Close"
+            >
+              ×
+            </button>
+
+            <h2>Admin Control Room</h2>
+
+            <div
+              style={{
+                display: "flex",
+                gap: "0.6rem",
+                margin: "0.8rem 0 1.2rem",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setAdminTab("properties")}
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: "8px",
+                  border: "1px solid #d1d5db",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  background:
+                    adminTab === "properties" ? "#14532d" : "#f9fafb",
+                  color: adminTab === "properties" ? "#ffffff" : "#374151",
+                }}
+              >
+                Properties ({pendingPropCount} pending)
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setAdminTab("leads")}
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: "8px",
+                  border: "1px solid #d1d5db",
+                  cursor: "pointer",
+                  fontWeight: 700,
+                  background: adminTab === "leads" ? "#14532d" : "#f9fafb",
+                  color: adminTab === "leads" ? "#ffffff" : "#374151",
+                }}
+              >
+                Buyer Leads ({pendingLeadCount} pending)
+              </button>
+            </div>
+
+            {adminTab === "properties" ? (
+              adminAllProperties.length === 0 ? (
+                <p style={{ padding: "1rem 0", color: "#555" }}>
+                  No database listings found yet.
+                </p>
+              ) : (
+                <div style={{ display: "grid", gap: "1rem" }}>
+                  {adminAllProperties.map((item) => (
+                    <div
+                      key={item.id}
+                      style={{
+                        border: "1px solid #e5e7eb",
+                        borderRadius: "10px",
+                        padding: "1rem",
+                        background:
+                          item.status === "pending" ? "#fffbeb" : "#ffffff",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "flex-start",
+                          gap: "1rem",
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <div>
+                          <small style={{ color: "#059669", fontWeight: 700 }}>
+                            {item.status === "pending"
+                              ? "⏳ PENDING"
+                              : "✓ LIVE"}{" "}
+                            • {item.type} • {item.transactionType}
+                          </small>
+                          <h4 style={{ margin: "4px 0" }}>{item.title}</h4>
+                          <p style={{ margin: "2px 0", fontSize: "0.9rem" }}>
+                            📍 {item.location} — <b>{item.price}</b>
+                          </p>
+                          <small style={{ color: "#4b5563" }}>
+                            Owner: {item.sellerName} ({item.sellerPhone})
+                          </small>
+                        </div>
+
+                        <div
+                          style={{
+                            display: "flex",
+                            gap: "0.45rem",
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          {item.status === "pending" && (
+                            <button
+                              type="button"
+                              disabled={actionLoadingId === item.id}
+                              onClick={() =>
+                                handleAdminUpdate(
+                                  item.id,
+                                  { status: "published" },
+                                  "Property approved and published live!"
+                                )
+                              }
+                              style={{
+                                background: "#15803d",
+                                color: "#fff",
+                                border: "none",
+                                padding: "0.45rem 0.8rem",
+                                borderRadius: "6px",
+                                cursor: "pointer",
+                                fontWeight: 600,
+                                fontSize: "0.82rem",
+                              }}
+                            >
+                              Approve
+                            </button>
+                          )}
+
+                          <button
+                            type="button"
+                            disabled={actionLoadingId === item.id}
+                            onClick={() =>
+                              handleAdminUpdate(item.id, {
+                                is_featured: !item.isFeatured,
+                              })
+                            }
+                            style={{
+                              background: item.isFeatured
+                                ? "#f59e0b"
+                                : "#f3f4f6",
+                              color: item.isFeatured ? "#111827" : "#374151",
+                              border: "1px solid #d1d5db",
+                              padding: "0.45rem 0.8rem",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: "0.82rem",
+                            }}
+                          >
+                            {item.isFeatured
+                              ? "⭐ Featured ON"
+                              : "☆ Make Featured"}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={actionLoadingId === item.id}
+                            onClick={() =>
+                              handleAdminUpdate(item.id, {
+                                is_verified: !item.isVerified,
+                              })
+                            }
+                            style={{
+                              background: item.isVerified
+                                ? "#dcfce7"
+                                : "#f3f4f6",
+                              color: item.isVerified ? "#166534" : "#374151",
+                              border: "1px solid #d1d5db",
+                              padding: "0.45rem 0.8rem",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: "0.82rem",
+                            }}
+                          >
+                            {item.isVerified ? "✓ Verified ON" : "Mark Verified"}
+                          </button>
+
+                          <button
+                            type="button"
+                            disabled={actionLoadingId === item.id}
+                            onClick={() => handleDeleteProperty(item.id)}
+                            style={{
+                              background: "#fee2e2",
+                              color: "#b91c1c",
+                              border: "none",
+                              padding: "0.45rem 0.8rem",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: "0.82rem",
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : adminLeads.length === 0 ? (
+              <p style={{ padding: "1rem 0", color: "#555" }}>
+                No buyer contact requests yet.
+              </p>
+            ) : (
+              <div style={{ display: "grid", gap: "1rem" }}>
+                {adminLeads.map((lead) => (
+                  <div
+                    key={lead.id}
+                    style={{
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "10px",
+                      padding: "1rem",
+                      background:
+                        lead.status === "pending" ? "#fffbeb" : "#ffffff",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "1rem",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <div>
+                        <span
+                          style={{
+                            fontSize: "0.72rem",
+                            fontWeight: 800,
+                            padding: "2px 8px",
+                            borderRadius: "999px",
+                            background:
+                              lead.status === "approved"
+                                ? "#dcfce7"
+                                : lead.status === "closed"
+                                ? "#e5e7eb"
+                                : "#fef3c7",
+                            color:
+                              lead.status === "approved"
+                                ? "#166534"
+                                : lead.status === "closed"
+                                ? "#374151"
+                                : "#92400e",
+                          }}
+                        >
+                          {lead.status.toUpperCase()}
+                        </span>
+
+                        <h4 style={{ margin: "6px 0 2px" }}>
+                          Property: {lead.property_title}
+                        </h4>
+                        <p style={{ margin: "2px 0", fontSize: "0.9rem" }}>
+                          <b>Buyer:</b> {lead.buyer_name} ({lead.buyer_phone})
+                        </p>
+                        <p style={{ margin: "2px 0", fontSize: "0.88rem" }}>
+                          <b>Owner:</b> {lead.seller_name || "N/A"}{" "}
+                          {lead.seller_phone ? `(${lead.seller_phone})` : ""}
+                        </p>
+                        {lead.buyer_note && (
+                          <small style={{ color: "#4b5563" }}>
+                            Note: {lead.buyer_note}
+                          </small>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", gap: "0.45rem", alignItems: "center" }}>
+                        {lead.status !== "approved" && (
+                          <button
+                            type="button"
+                            disabled={actionLoadingId === lead.id}
+                            onClick={() =>
+                              handleLeadStatusChange(lead.id, "approved")
+                            }
+                            style={{
+                              background: "#15803d",
+                              color: "#fff",
+                              border: "none",
+                              padding: "0.45rem 0.8rem",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: "0.82rem",
+                            }}
+                          >
+                            Approve &amp; Connect
+                          </button>
+                        )}
+                        {lead.status !== "closed" && (
+                          <button
+                            type="button"
+                            disabled={actionLoadingId === lead.id}
+                            onClick={() =>
+                              handleLeadStatusChange(lead.id, "closed")
+                            }
+                            style={{
+                              background: "#f3f4f6",
+                              color: "#374151",
+                              border: "1px solid #d1d5db",
+                              padding: "0.45rem 0.8rem",
+                              borderRadius: "6px",
+                              cursor: "pointer",
+                              fontWeight: 600,
+                              fontSize: "0.82rem",
+                            }}
+                          >
+                            Close
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {/* Property Details Modal */}
       {selectedProperty && (
         <div
           className="modal-overlay"
@@ -1029,9 +1871,39 @@ export default function App() {
             </div>
 
             <div className="details-content">
-              <span className="details-category">
-                {selectedProperty.type}
-              </span>
+              <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                <span className="details-category">
+                  {selectedProperty.type}
+                </span>
+                {selectedProperty.isFeatured && (
+                  <span
+                    style={{
+                      background: "#fef3c7",
+                      color: "#b45309",
+                      fontSize: "0.75rem",
+                      fontWeight: 700,
+                      padding: "2px 8px",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    ⭐ Featured Listing
+                  </span>
+                )}
+                {selectedProperty.isVerified && (
+                  <span
+                    style={{
+                      background: "#dcfce7",
+                      color: "#15803d",
+                      fontSize: "0.75rem",
+                      fontWeight: 700,
+                      padding: "2px 8px",
+                      borderRadius: "6px",
+                    }}
+                  >
+                    ✓ BhumiEdge Verified
+                  </span>
+                )}
+              </div>
 
               <h2 id="details-title">{selectedProperty.title}</h2>
 
@@ -1039,9 +1911,7 @@ export default function App() {
                 📍 {selectedProperty.location}
               </p>
 
-              <h3 className="details-price">
-                {selectedProperty.price}
-              </h3>
+              <h3 className="details-price">{selectedProperty.price}</h3>
 
               <div className="details-meta">
                 <span>
@@ -1052,35 +1922,35 @@ export default function App() {
                 <span>{selectedProperty.type}</span>
               </div>
 
-              <p>
+              <p style={{ whiteSpace: "pre-line" }}>
                 {selectedProperty.description || "No description provided."}
               </p>
 
-              <p>
-                <b>Additional Details:</b>{" "}
-                {selectedProperty.details || "Not provided"}
-              </p>
+              {selectedProperty.details && (
+                <p>
+                  <b>Additional Details:</b> {selectedProperty.details}
+                </p>
+              )}
 
               <div className="seller-information">
-                <h3>Seller Information</h3>
+                <h3>Owner Information</h3>
                 <p>
-                  <b>Name:</b>{" "}
-                  {selectedProperty.sellerName ||
-                    "Not available for sample listing"}
+                  <b>Owner Name:</b>{" "}
+                  {selectedProperty.sellerName || "BhumiEdge Verified Owner"}
                 </p>
+
+                <button
+                  type="button"
+                  className="modal-submit-btn"
+                  onClick={() => {
+                    setEnquiryProperty(selectedProperty);
+                    setSelectedProperty(null);
+                    setIsEnquiryOpen(true);
+                  }}
+                >
+                  Request Seller Contact
+                </button>
               </div>
-
-              <button
-                className="contact-seller-btn"
-                onClick={() => handleContactSeller(selectedProperty)}
-              >
-                Contact Seller on WhatsApp
-              </button>
-
-              <small className="contact-note">
-                WhatsApp will open in a new tab. Do not share OTP or payment
-                details with unknown people.
-              </small>
             </div>
           </section>
         </div>

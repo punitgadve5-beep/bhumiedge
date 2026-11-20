@@ -14,8 +14,8 @@ export function AboutPage() {
     <div>
       <PageHeader
         eyebrow="Company"
-        title="About Apna Estate"
-        text="Apna Estate is a pan-India property desk for families, investors, students, owners and brokers."
+        title="BhumiEdge"
+        text="BhumiEdge is a pan-India property desk for families, investors, students, owners and brokers."
       />
       <div className="mx-auto max-w-6xl px-4 py-12">
         <div className="grid gap-4 md:grid-cols-3">
@@ -61,7 +61,7 @@ export function ContactPage() {
     if (Object.keys(nextErrors).length) return;
     const receipt = { reference: reference("CT"), ...form };
     setSent(receipt);
-    pushToast("Message sent to the Apna Estate desk.");
+    pushToast("Message sent to the BhumiEdge desk.");
   };
 
   return (
@@ -69,20 +69,20 @@ export function ContactPage() {
       <PageHeader
         eyebrow="Desk"
         title="Contact"
-        text="Call, write, or send a note. The Bengaluru desk coordinates introductions across the cities on this site."
+        text="Call, write, or send a note. The BhumiEdge desk coordinates introductions across the cities on this site."
       />
       <div className="mx-auto grid max-w-6xl gap-8 px-4 py-10 lg:grid-cols-2">
         <div className="rounded-[2rem] bg-navy p-8 text-white">
-          <h2 className="text-3xl">Apna Estate</h2>
+          <h2 className="text-3xl">BhumiEdge</h2>
           <p className="mt-3 text-sm leading-relaxed text-white/75">
-            4th Floor, Prestige Towers, Residency Road, Bengaluru 560025
+            Pan-India Property Desk — Land, Plots, Homes &amp; Commercial Real Estate
           </p>
           <div className="mt-6 flex flex-col gap-3">
             <a href="tel:+918040002100" className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/15">
               Call 080 4000 2100
             </a>
-            <a href="mailto:hello@apnaestate.in" className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/15">
-              Email hello@apnaestate.in
+            <a href="mailto:hello@bhumiedge.in" className="rounded-2xl bg-white/10 px-4 py-3 text-sm font-bold hover:bg-white/15">
+              Email hello@bhumiedge.in
             </a>
           </div>
         </div>
