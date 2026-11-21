@@ -90,7 +90,7 @@ function AuthModal({ onClose, onLoginSuccess }) {
           ×
         </button>
 
-        <h2>Welcome to Bhoomi Setu</h2>
+        <h2>Welcome to bhumiEdge</h2>
 
         <p>
           {mode === "login" && "Login to continue"}
